@@ -10,3 +10,12 @@
 - [x] Add a visible audit trace mode in the results UI.
 - [x] Add regression checks proving different URLs and metric changes yield different scores.
 - [x] Verify the app with typecheck, production build, and representative visual screenshots.
+
+## Global 1.0 visual refresh
+
+- [x] Replace application red accents with gold/light-gold while preserving severity meaning through neutral contrast and labels.
+- [x] Update the sidebar brand treatment to “Website Intelligence Auditor” and add a flashing AUDITOR word effect.
+- [x] Add the grading scale display to the results dossier.
+- [x] Apply the generated signal mark as the favicon where supported.
+- [x] Preserve layout, workflow, scoring dimensions, and current audit interactions.
+- [x] Run typecheck/build and capture a final visual verification screenshot.
