@@ -26,3 +26,9 @@
 - [ ] Set “Auditor” to red and preserve its flashing effect.
 - [ ] Update the visible engine version to Matrix v1.0.0.
 - [ ] Verify and save the updated version.
+
+## Logo and completion status refinement
+
+- [x] Restore the sidebar logo icon to red while leaving the favicon unchanged.
+- [x] Show completed audit status as green COMPLETE.
+- [x] Verify the updated states and save the live version.

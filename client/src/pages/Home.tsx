@@ -161,7 +161,7 @@ export default function Home() {
       </aside>
 
       <main className="workspace">
-        <header className="topbar"><div className="topbar-path"><span>Auditor</span><span>/</span><strong>{isIdle ? "New audit" : normalized?.replace(/^https?:\/\//, "")}</strong></div><div className="topbar-actions"><button className="icon-btn" title="Documentation"><Info size={16} /></button><button className="icon-btn" title="Refresh"><RefreshCw size={16} /></button><div className="status-pill"><StatusDot tone={auditState === "complete" ? "sage" : "red"} />{isIdle ? "Workspace ready" : isRunning ? "Analysis in progress" : "Audit complete"}</div></div></header>
+        <header className="topbar"><div className="topbar-path"><span>Auditor</span><span>/</span><strong>{isIdle ? "New audit" : normalized?.replace(/^https?:\/\//, "")}</strong></div><div className="topbar-actions"><button className="icon-btn" title="Documentation"><Info size={16} /></button><button className="icon-btn" title="Refresh"><RefreshCw size={16} /></button><div className={`status-pill ${auditState === "complete" ? "complete-status" : ""}`}><StatusDot tone={auditState === "complete" ? "sage" : "red"} />{isIdle ? "Workspace ready" : isRunning ? "Analysis in progress" : "COMPLETE"}</div></div></header>
 
         {isIdle ? (
           <section className="landing-view">
