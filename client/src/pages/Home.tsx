@@ -146,7 +146,7 @@ export default function Home() {
       <aside className="method-rail">
         <div className="rail-brand">
           <div className="brand-mark"><span /> <span /> <span /></div>
-          <div><div className="eyebrow">Matrix / 01</div><strong>Website Intelligence <span className="flash-word">Auditor</span></strong></div>
+          <div><div className="eyebrow">Matrix / 01</div><strong><span className="brand-primary">Website Intelligence</span> <span className="flash-word">Auditor</span></strong></div>
         </div>
         <div className="rail-rule" />
         <div className="rail-method-label"><span>Method</span><span>{isIdle ? "Ready" : isRunning ? `${progress}%` : "Complete"}</span></div>
@@ -157,7 +157,7 @@ export default function Home() {
             return <li key={step} className={active ? "active" : done ? "done" : ""}><span className="pipeline-index">{String(index + 1).padStart(2, "0")}</span><span>{step}</span>{done && <Check size={13} />}</li>;
           })}
         </ol>
-        <div className="rail-footer"><div className="eyebrow">Public web only</div><p>Robots.txt and crawl restrictions are respected.</p><div className="rail-version">MATRIX ENGINE <span>v0.9.4</span></div></div>
+        <div className="rail-footer"><div className="eyebrow">Public web only</div><p>Robots.txt and crawl restrictions are respected.</p><div className="rail-version">MATRIX ENGINE <span>v1.0.0</span></div></div>
       </aside>
 
       <main className="workspace">
