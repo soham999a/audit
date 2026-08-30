@@ -32,3 +32,11 @@
 - [x] Restore the sidebar logo icon to red while leaving the favicon unchanged.
 - [x] Show completed audit status as green COMPLETE.
 - [x] Verify the updated states and save the live version.
+
+## Expandable score-detail enhancement
+
+- [x] Inspect the current score-dimension data and interaction.
+- [x] Add expandable panels with metric values, pass/fail counts, weights, and contributions.
+- [x] Add dimension formulas, interpretation, priority context, and strategic recommendations.
+- [x] Style the panels responsively and preserve keyboard-accessible collapse controls.
+- [x] Run typecheck/build and verify the landing workspace visually.
