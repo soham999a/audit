@@ -40,3 +40,11 @@
 - [x] Add dimension formulas, interpretation, priority context, and strategic recommendations.
 - [x] Style the panels responsively and preserve keyboard-accessible collapse controls.
 - [x] Run typecheck/build and verify the landing workspace visually.
+
+## Relationship clarity index fix
+
+- [x] Trace why the Intelligence Graph currently repeats 0.57.
+- [x] Derive relationship clarity from site-dependent graph and architecture signals.
+- [x] Surface the calculation inputs in the graph view for traceability.
+- [x] Verify different audited URLs produce meaningfully different values.
+- [x] Run typecheck/build, visual verification, and save the live update.
