@@ -165,10 +165,10 @@ export default function Home() {
   return (
     <div className="app-shell">
       <aside className="method-rail">
-        <div className="rail-brand">
+        <button className="rail-brand" onClick={() => { setAuditState("idle"); setAuditResult(null); setProgress(0); setSelectedFinding(null); setActiveTab("overview"); }} title="Go to homepage">
           <div className="brand-mark"><span /> <span /> <span /></div>
           <div><div className="eyebrow">Matrix / 01</div><strong><span className="brand-primary">Website Intelligence</span> <span className="flash-word">Auditor</span></strong></div>
-        </div>
+        </button>
         <div className="rail-rule" />
         <div className="rail-method-label"><span>Method</span><span>{isIdle ? "Ready" : isRunning ? `${progress}%` : "Complete"}</span></div>
         <ol className="pipeline-list">
