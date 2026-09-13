@@ -1,8 +1,12 @@
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
-import { cert, getApps, initializeApp, type App } from "firebase-admin/app";
-import { getAuth } from "firebase-admin/auth";
-import type { ServiceAccount } from "firebase-admin";
+import type { App, ServiceAccount } from "firebase-admin";
+
+// Nothing from firebase-admin is loaded at module scope. The Vercel builder
+// compiles functions to a single CJS file, and any firebase-admin import that
+// crashes at bootstrap turns into Vercel's HTML 500 page (unparseable by the
+// client). Everything here is lazy so failures land inside the handler's
+// try/catch and come back as a real JSON error message instead.
 
 function loadServiceAccount(): ServiceAccount | null {
   const fromBase64 = process.env.FIREBASE_SERVICE_ACCOUNT_B64;
@@ -49,29 +53,57 @@ function findAdminSdkJson(dir: string): string[] {
   }
 }
 
-function adminApp(): App {
-  if (!getApps().length) {
+type AdminAppModule = typeof import("firebase-admin/app");
+type AdminAuthModule = typeof import("firebase-admin/auth");
+type AdminBundle = AdminAppModule & { getAuth: AdminAuthModule["getAuth"] };
+
+let adminPromise: Promise<AdminBundle> | null = null;
+
+async function loadAdmin(): Promise<AdminBundle> {
+  if (!adminPromise) {
+    adminPromise = (async () => {
+      try {
+        const [appModule, authModule] = await Promise.all([
+          import("firebase-admin/app"),
+          import("firebase-admin/auth"),
+        ]);
+        return { ...appModule, getAuth: authModule.getAuth };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "unknown error";
+        throw new Error(`Failed to load firebase-admin (${message})`);
+      }
+    })();
+  }
+  return adminPromise;
+}
+
+function adminApp(admin: AdminBundle): App {
+  if (!admin.getApps().length) {
     const serviceAccount = loadServiceAccount();
     if (!serviceAccount) {
       throw new Error(
         "Firebase is not configured — set FIREBASE_SERVICE_ACCOUNT_B64, FIREBASE_SERVICE_ACCOUNT, or drop firebase-service-account.json in the project root"
       );
     }
-    initializeApp({ credential: cert(serviceAccount) });
+    admin.initializeApp({ credential: admin.cert(serviceAccount) });
   }
-  return getApps()[0] as App;
+  return admin.getApps()[0] as App;
 }
 
 export async function verifyIdToken(idToken: string): Promise<string> {
-  const decoded = await getAuth(adminApp()).verifyIdToken(idToken);
+  const admin = await loadAdmin();
+  const decoded = await admin.getAuth(adminApp(admin)).verifyIdToken(idToken);
   return decoded.uid;
 }
 
 export async function setUserPremium(uid: string, premium: boolean): Promise<void> {
-  // Lazy import so /api/premium/link (auth-only) never loads @google-cloud/firestore.
-  const { getFirestore, Timestamp } = await import("firebase-admin/firestore");
-  await getFirestore(adminApp())
+  const [admin, firestore] = await Promise.all([
+    loadAdmin(),
+    import("firebase-admin/firestore"),
+  ]);
+  await firestore
+    .getFirestore(adminApp(admin))
     .collection("users")
     .doc(uid)
-    .set({ premium, premiumSince: Timestamp.now() }, { merge: true });
+    .set({ premium, premiumSince: firestore.Timestamp.now() }, { merge: true });
 }
