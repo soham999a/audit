@@ -17,6 +17,7 @@ build/
 # Firebase service account (never commit private keys)
 firebase-service-account.json
 *firebase-adminsdk*.json
+service-account-b64.txt
 
 # IDE and editor files
 .vscode/

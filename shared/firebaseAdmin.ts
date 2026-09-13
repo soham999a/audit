@@ -2,7 +2,6 @@ import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { cert, getApps, initializeApp, type App } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
-import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import type { ServiceAccount } from "firebase-admin";
 
 function loadServiceAccount(): ServiceAccount | null {
@@ -55,7 +54,7 @@ function adminApp(): App {
     const serviceAccount = loadServiceAccount();
     if (!serviceAccount) {
       throw new Error(
-        "Firebase is not configured — set FIREBASE_SERVICE_ACCOUNT in .env or drop firebase-service-account.json in the project root"
+        "Firebase is not configured — set FIREBASE_SERVICE_ACCOUNT_B64, FIREBASE_SERVICE_ACCOUNT, or drop firebase-service-account.json in the project root"
       );
     }
     initializeApp({ credential: cert(serviceAccount) });
@@ -69,6 +68,8 @@ export async function verifyIdToken(idToken: string): Promise<string> {
 }
 
 export async function setUserPremium(uid: string, premium: boolean): Promise<void> {
+  // Lazy import so /api/premium/link (auth-only) never loads @google-cloud/firestore.
+  const { getFirestore, Timestamp } = await import("firebase-admin/firestore");
   await getFirestore(adminApp())
     .collection("users")
     .doc(uid)
