@@ -7,7 +7,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { defineConfig, type Plugin, type ViteDevServer } from "vite";
 import { vitePluginManusRuntime } from "vite-plugin-manus-runtime";
-import { createLinkForUser, unlockUserByUid, verifyAndUnlock } from "./shared/premiumApi";
+import {
+  createLinkForUser,
+  unlockUserByUid,
+  verifyAndUnlock,
+} from "./shared/premiumApi";
+import { fetchPage } from "./shared/fetchPage";
 import { verifyWebhookSignature } from "./shared/razorpay";
 
 // =============================================================================
@@ -60,7 +65,7 @@ function writeToLogFile(source: LogSource, entries: unknown[]) {
   const logPath = path.join(LOG_DIR, `${source}.log`);
 
   // Format entries with timestamps
-  const lines = entries.map((entry) => {
+  const lines = entries.map(entry => {
     const ts = new Date().toISOString();
     return `[${ts}] ${JSON.stringify(entry)}`;
   });
@@ -136,7 +141,7 @@ function vitePluginManusDebugCollector(): Plugin {
         }
 
         let body = "";
-        req.on("data", (chunk) => {
+        req.on("data", chunk => {
           body += chunk.toString();
         });
 
@@ -162,9 +167,45 @@ function viteApiMiddleware(): Plugin {
     configureServer(server: ViteDevServer) {
       server.middlewares.use(async (req, res, next) => {
         if (!req.url?.startsWith("/api/")) return next();
-        const route = new URL(req.url, "http://localhost").pathname.replace(/\/+$/, "");
+        const route = new URL(req.url, "http://localhost").pathname.replace(
+          /\/+$/,
+          ""
+        );
         try {
-          if (req.method === "POST" && (route === "/api/premium/link" || route === "/api/premium/verify")) {
+          if (req.method === "POST" && route === "/api/audit/fetch") {
+            const raw = await readRawBody(req);
+            let body: Record<string, unknown> = {};
+            try {
+              body = raw.length ? JSON.parse(raw.toString("utf-8")) : {};
+            } catch {
+              /* empty body */
+            }
+            const url = typeof body.url === "string" ? body.url.trim() : "";
+            if (!/^https?:\/\//i.test(url)) {
+              sendJson(res, 400, {
+                ok: false,
+                error: "A valid http(s) URL is required",
+              });
+              return;
+            }
+            const page = await fetchPage(url);
+            if (!page.ok) {
+              sendJson(res, 502, { ok: false, error: page.error });
+              return;
+            }
+            sendJson(res, 200, {
+              ok: true,
+              status: page.status,
+              url: page.finalUrl,
+              html: page.html,
+              truncated: page.truncated,
+            });
+            return;
+          }
+          if (
+            req.method === "POST" &&
+            (route === "/api/premium/link" || route === "/api/premium/verify")
+          ) {
             const raw = await readRawBody(req);
             let body: Record<string, unknown> = {};
             try {
@@ -173,22 +214,38 @@ function viteApiMiddleware(): Plugin {
               /* empty body */
             }
             const authorization = req.headers.authorization ?? "";
-            const idToken = authorization.startsWith("Bearer ") ? authorization.slice("Bearer ".length) : "";
+            const idToken = authorization.startsWith("Bearer ")
+              ? authorization.slice("Bearer ".length)
+              : "";
             if (!idToken) {
-              sendJson(res, 401, { ok: false, error: "Authentication required" });
+              sendJson(res, 401, {
+                ok: false,
+                error: "Authentication required",
+              });
               return;
             }
-            const origin = req.headers.origin || `https://${req.headers.host || "localhost"}`;
+            const origin =
+              req.headers.origin ||
+              `https://${req.headers.host || "localhost"}`;
             const result =
               route === "/api/premium/link"
-                ? await createLinkForUser(idToken, body.currency as string, origin)
-                : await verifyAndUnlock(idToken, body.payment_link_id as string | undefined);
+                ? await createLinkForUser(
+                    idToken,
+                    body.currency as string,
+                    origin
+                  )
+                : await verifyAndUnlock(
+                    idToken,
+                    body.payment_link_id as string | undefined
+                  );
             sendJson(res, result.status, result.body);
             return;
           }
           if (req.method === "POST" && route === "/api/premium/webhook") {
             const raw = await readRawBody(req);
-            const signature = req.headers["x-razorpay-signature"] as string | undefined;
+            const signature = req.headers["x-razorpay-signature"] as
+              | string
+              | undefined;
             const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
             if (!secret || !verifyWebhookSignature(raw, signature, secret)) {
               sendJson(res, 400, { ok: false, error: "Invalid signature" });
@@ -201,7 +258,12 @@ function viteApiMiddleware(): Plugin {
               /* ignore */
             }
             const event = parsed as {
-              entity?: { event?: string; payload?: { payment_link?: { id?: string; notes?: { uid?: string } } } };
+              entity?: {
+                event?: string;
+                payload?: {
+                  payment_link?: { id?: string; notes?: { uid?: string } };
+                };
+              };
             };
             const eventName = event?.entity?.event ?? "";
             const uid = event?.entity?.payload?.payment_link?.notes?.uid;
@@ -210,7 +272,10 @@ function viteApiMiddleware(): Plugin {
                 await unlockUserByUid(uid);
                 console.log(`[razorpay webhook] ${eventName} · uid ${uid}`);
               } catch (error) {
-                console.error("[razorpay webhook] could not grant premium", error);
+                console.error(
+                  "[razorpay webhook] could not grant premium",
+                  error
+                );
                 sendJson(res, 500, { ok: false, error: "Grant failed" });
                 return;
               }
@@ -221,23 +286,35 @@ function viteApiMiddleware(): Plugin {
           next();
         } catch (error) {
           console.error("[api middleware]", error);
-          sendJson(res, 500, { ok: false, error: error instanceof Error ? error.message : "Server error" });
+          sendJson(res, 500, {
+            ok: false,
+            error: error instanceof Error ? error.message : "Server error",
+          });
         }
       });
     },
   };
 }
 
-function readRawBody(req: { on: (event: string, cb: (chunk: Buffer) => void) => unknown }): Promise<Buffer> {
+function readRawBody(req: {
+  on: (event: string, cb: (chunk: Buffer) => void) => unknown;
+}): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
-    req.on("data", (chunk) => chunks.push(chunk));
+    req.on("data", chunk => chunks.push(chunk));
     req.on("end", () => resolve(Buffer.concat(chunks)));
     req.on("error", reject);
   });
 }
 
-function sendJson(res: { writeHead: (status: number, headers: Record<string, string>) => void; end: (body: string) => void }, status: number, body: unknown) {
+function sendJson(
+  res: {
+    writeHead: (status: number, headers: Record<string, string>) => void;
+    end: (body: string) => void;
+  },
+  status: number,
+  body: unknown
+) {
   res.writeHead(status, { "Content-Type": "application/json" });
   res.end(JSON.stringify(body));
 }
@@ -246,7 +323,12 @@ function vitePluginStorageProxy(): Plugin {
   return {
     name: "manus-storage-proxy",
     configureServer(server: ViteDevServer) {
-      const localStorageDir = path.join(PROJECT_ROOT, "client", "public", "manus-storage");
+      const localStorageDir = path.join(
+        PROJECT_ROOT,
+        "client",
+        "public",
+        "manus-storage"
+      );
       const mimeByExt: Record<string, string> = {
         ".png": "image/png",
         ".jpg": "image/jpeg",
@@ -274,7 +356,10 @@ function vitePluginStorageProxy(): Plugin {
           return;
         }
 
-        const forgeBaseUrl = (process.env.BUILT_IN_FORGE_API_URL || "").replace(/\/+$/, "");
+        const forgeBaseUrl = (process.env.BUILT_IN_FORGE_API_URL || "").replace(
+          /\/+$/,
+          ""
+        );
         const forgeKey = process.env.BUILT_IN_FORGE_API_KEY;
 
         if (!forgeBaseUrl || !forgeKey) {
@@ -284,7 +369,10 @@ function vitePluginStorageProxy(): Plugin {
         }
 
         try {
-          const forgeUrl = new URL("v1/storage/presign/get", forgeBaseUrl + "/");
+          const forgeUrl = new URL(
+            "v1/storage/presign/get",
+            forgeBaseUrl + "/"
+          );
           forgeUrl.searchParams.set("path", key);
 
           const forgeResp = await fetch(forgeUrl, {
@@ -315,7 +403,15 @@ function vitePluginStorageProxy(): Plugin {
   };
 }
 
-const plugins = [react(), tailwindcss(), jsxLocPlugin(), vitePluginManusRuntime(), vitePluginManusDebugCollector(), vitePluginStorageProxy(), viteApiMiddleware()];
+const plugins = [
+  react(),
+  tailwindcss(),
+  jsxLocPlugin(),
+  vitePluginManusRuntime(),
+  vitePluginManusDebugCollector(),
+  vitePluginStorageProxy(),
+  viteApiMiddleware(),
+];
 
 export default defineConfig({
   plugins,

@@ -3,12 +3,19 @@ import express from "express";
 import { createServer } from "http";
 import path from "path";
 import { fileURLToPath } from "url";
+import { fetchPage } from "../shared/fetchPage";
 import { verifyWebhookSignature } from "../shared/razorpay";
-import { createLinkForUser, unlockUserByUid, verifyAndUnlock } from "../shared/premiumApi";
+import {
+  createLinkForUser,
+  unlockUserByUid,
+  verifyAndUnlock,
+} from "../shared/premiumApi";
 
 function bearerToken(req: express.Request): string {
   const authorization = req.headers.authorization ?? "";
-  return authorization.startsWith("Bearer ") ? authorization.slice("Bearer ".length) : "";
+  return authorization.startsWith("Bearer ")
+    ? authorization.slice("Bearer ".length)
+    : "";
 }
 
 const __filename = fileURLToPath(import.meta.url);
@@ -22,13 +29,20 @@ async function startServer() {
     "/api/premium/webhook",
     express.raw({ type: "application/json" }),
     async (req, res) => {
-      const signature = req.headers["x-razorpay-signature"] as string | undefined;
+      const signature = req.headers["x-razorpay-signature"] as
+        | string
+        | undefined;
       const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
       if (!secret || !verifyWebhookSignature(req.body, signature, secret)) {
         return res.status(400).json({ ok: false, error: "Invalid signature" });
       }
       const event = JSON.parse(req.body.toString("utf-8")) as {
-        entity?: { event?: string; payload?: { payment_link?: { id?: string; notes?: { uid?: string } } } };
+        entity?: {
+          event?: string;
+          payload?: {
+            payment_link?: { id?: string; notes?: { uid?: string } };
+          };
+        };
       };
       const eventName = event?.entity?.event ?? "";
       const uid = event?.entity?.payload?.payment_link?.notes?.uid;
@@ -41,7 +55,9 @@ async function startServer() {
             return res.status(500).json({ ok: false, error: "Grant failed" });
           }
         }
-        console.log(`[razorpay webhook] ${eventName} · ${event?.entity?.payload?.payment_link?.id ?? "unknown"} · uid ${uid ?? "none"}`);
+        console.log(
+          `[razorpay webhook] ${eventName} · ${event?.entity?.payload?.payment_link?.id ?? "unknown"} · uid ${uid ?? "none"}`
+        );
       }
       return res.status(200).json({ ok: true });
     }
@@ -52,9 +68,12 @@ async function startServer() {
   app.post("/api/premium/link", async (req, res) => {
     const idToken = bearerToken(req);
     if (!idToken) {
-      return res.status(401).json({ ok: false, error: "Authentication required" });
+      return res
+        .status(401)
+        .json({ ok: false, error: "Authentication required" });
     }
-    const origin = req.headers.origin || `https://${req.headers.host || "localhost"}`;
+    const origin =
+      req.headers.origin || `https://${req.headers.host || "localhost"}`;
     const result = await createLinkForUser(idToken, req.body?.currency, origin);
     return res.status(result.status).json(result.body);
   });
@@ -62,10 +81,32 @@ async function startServer() {
   app.post("/api/premium/verify", async (req, res) => {
     const idToken = bearerToken(req);
     if (!idToken) {
-      return res.status(401).json({ ok: false, error: "Authentication required" });
+      return res
+        .status(401)
+        .json({ ok: false, error: "Authentication required" });
     }
     const result = await verifyAndUnlock(idToken, req.body?.payment_link_id);
     return res.status(result.status).json(result.body);
+  });
+
+  app.post("/api/audit/fetch", async (req, res) => {
+    const url = typeof req.body?.url === "string" ? req.body.url.trim() : "";
+    if (!/^https?:\/\//i.test(url)) {
+      return res
+        .status(400)
+        .json({ ok: false, error: "A valid http(s) URL is required" });
+    }
+    const page = await fetchPage(url);
+    if (!page.ok) {
+      return res.status(502).json({ ok: false, error: page.error });
+    }
+    return res.json({
+      ok: true,
+      status: page.status,
+      url: page.finalUrl,
+      html: page.html,
+      truncated: page.truncated,
+    });
   });
 
   // Serve static files from dist/public in production
