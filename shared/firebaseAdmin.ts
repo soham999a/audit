@@ -6,6 +6,14 @@ import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import type { ServiceAccount } from "firebase-admin";
 
 function loadServiceAccount(): ServiceAccount | null {
+  const fromBase64 = process.env.FIREBASE_SERVICE_ACCOUNT_B64;
+  if (fromBase64) {
+    try {
+      return JSON.parse(Buffer.from(fromBase64, "base64").toString("utf-8")) as ServiceAccount;
+    } catch {
+      throw new Error("FIREBASE_SERVICE_ACCOUNT_B64 is not a base64-encoded service-account JSON");
+    }
+  }
   const envJson = process.env.FIREBASE_SERVICE_ACCOUNT;
   if (envJson) {
     try {

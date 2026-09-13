@@ -5,7 +5,7 @@ import { setUserPremium, verifyIdToken } from "./firebaseAdmin";
 type ApiResult = { status: number; body: Record<string, unknown> };
 
 function isFirebaseMisconfigured(error: unknown): boolean {
-  return error instanceof Error && error.message.includes("FIREBASE_SERVICE_ACCOUNT");
+  return error instanceof Error && /FIREBASE_SERVICE_ACCOUNT/.test(error.message);
 }
 
 export async function createLinkForUser(

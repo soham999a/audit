@@ -55,13 +55,23 @@ export type PaymentLinkResponse = {
   error?: string;
 };
 
+async function parseApiResponse(response: Response): Promise<Record<string, unknown>> {
+  const text = await response.text();
+  if (!text) return {};
+  try {
+    return JSON.parse(text) as Record<string, unknown>;
+  } catch {
+    throw new Error(`The server returned an unexpected response (HTTP ${response.status}).`);
+  }
+}
+
 export async function createRazorpayCheckout(idToken: string, currency: string): Promise<PaymentLinkResponse> {
   const response = await fetch("/api/premium/link", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
     body: JSON.stringify({ currency }),
   });
-  return (await response.json()) as PaymentLinkResponse;
+  return (await parseApiResponse(response)) as PaymentLinkResponse;
 }
 
 export async function verifyAndUnlockPremium(idToken: string, paymentLinkId: string): Promise<boolean> {
@@ -70,9 +80,12 @@ export async function verifyAndUnlockPremium(idToken: string, paymentLinkId: str
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
     body: JSON.stringify({ payment_link_id: paymentLinkId }),
   });
-  const payload = (await response.json()) as { ok?: boolean; paid?: boolean; premium?: boolean; error?: string };
+  const payload = (await parseApiResponse(response)) as { ok?: boolean; paid?: boolean; premium?: boolean; error?: string };
+  if (!response.ok && payload.error) {
+    throw new Error(payload.error);
+  }
   if (!response.ok) {
-    throw new Error(payload.error || "Payment verification failed");
+    throw new Error(`Payment verification failed (HTTP ${response.status}).`);
   }
   return payload.ok === true && payload.paid === true;
 }
