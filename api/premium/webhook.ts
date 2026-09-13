@@ -1,7 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { Buffer } from "node:buffer";
-import { verifyWebhookSignature } from "../../shared/razorpay";
-import { unlockUserByUid } from "../../shared/premiumApi";
 
 export const config = { api: { bodyParser: false } };
 
@@ -23,6 +21,9 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (req.method !== "POST") {
       return res.status(405).json({ ok: false, error: "Method not allowed" });
     }
+
+    const { verifyWebhookSignature } = await import("../../shared/razorpay");
+    const { unlockUserByUid } = await import("../../shared/premiumApi");
 
     const chunks: Buffer[] = [];
     for await (const chunk of req) {
