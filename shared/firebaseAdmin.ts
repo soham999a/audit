@@ -11,15 +11,13 @@ function loadServiceAccount(): ServiceAccount | null {
     try {
       return JSON.parse(envJson) as ServiceAccount;
     } catch {
-      throw new Error("FIREBASE_SERVICE_ACCOUNT in .env is not valid JSON");
+      throw new Error("FIREBASE_SERVICE_ACCOUNT in env is not valid JSON");
     }
   }
-  const rootDir = path.dirname(import.meta.dirname);
+  const cwd = process.cwd();
   const candidates = [
-    path.resolve(process.cwd(), "firebase-service-account.json"),
-    path.resolve(rootDir, "firebase-service-account.json"),
-    ...findAdminSdkJson(path.resolve(process.cwd())),
-    ...findAdminSdkJson(rootDir),
+    path.join(cwd, "firebase-service-account.json"),
+    ...findAdminSdkJson(cwd),
   ];
   const seen = new Set<string>();
   for (const candidate of candidates) {
