@@ -1,0 +1,12 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Users can read only their own premium-status document.
+    // The server (Firebase Admin SDK, service account) bypasses rules,
+    // so premium unlocks written after payment verification still work.
+    match /users/{uid} {
+      allow get, list: if request.auth != null && request.auth.uid == uid;
+      allow create, update, delete: if false;
+    }
+  }
+}

@@ -1,3 +1,5 @@
+// Load .env for /api dev middleware (Razorpay + Firebase Admin keys live in .env only).
+import "dotenv/config";
 import { jsxLocPlugin } from "@builder.io/vite-plugin-jsx-loc";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
@@ -5,6 +7,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { defineConfig, type Plugin, type ViteDevServer } from "vite";
 import { vitePluginManusRuntime } from "vite-plugin-manus-runtime";
+import { createLinkForUser, unlockUserByUid, verifyAndUnlock } from "./shared/premiumApi";
+import { verifyWebhookSignature } from "./shared/razorpay";
 
 // =============================================================================
 // Manus Debug Collector - Vite Plugin
@@ -150,6 +154,94 @@ function vitePluginManusDebugCollector(): Plugin {
   };
 }
 
+// Vite dev middleware serving /api/* so premium payment works in `pnpm dev`
+// without a second process. Mirrors server/index.ts and the Vercel api/ functions.
+function viteApiMiddleware(): Plugin {
+  return {
+    name: "matrix-api-middleware",
+    configureServer(server: ViteDevServer) {
+      server.middlewares.use(async (req, res, next) => {
+        if (!req.url?.startsWith("/api/")) return next();
+        const route = new URL(req.url, "http://localhost").pathname.replace(/\/+$/, "");
+        try {
+          if (req.method === "POST" && (route === "/api/premium/link" || route === "/api/premium/verify")) {
+            const raw = await readRawBody(req);
+            let body: Record<string, unknown> = {};
+            try {
+              body = raw.length ? JSON.parse(raw.toString("utf-8")) : {};
+            } catch {
+              /* empty body */
+            }
+            const authorization = req.headers.authorization ?? "";
+            const idToken = authorization.startsWith("Bearer ") ? authorization.slice("Bearer ".length) : "";
+            if (!idToken) {
+              sendJson(res, 401, { ok: false, error: "Authentication required" });
+              return;
+            }
+            const origin = req.headers.origin || `https://${req.headers.host || "localhost"}`;
+            const result =
+              route === "/api/premium/link"
+                ? await createLinkForUser(idToken, body.currency as string, origin)
+                : await verifyAndUnlock(idToken, body.payment_link_id as string | undefined);
+            sendJson(res, result.status, result.body);
+            return;
+          }
+          if (req.method === "POST" && route === "/api/premium/webhook") {
+            const raw = await readRawBody(req);
+            const signature = req.headers["x-razorpay-signature"] as string | undefined;
+            const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
+            if (!secret || !verifyWebhookSignature(raw, signature, secret)) {
+              sendJson(res, 400, { ok: false, error: "Invalid signature" });
+              return;
+            }
+            let parsed: unknown = {};
+            try {
+              parsed = JSON.parse(raw.toString("utf-8"));
+            } catch {
+              /* ignore */
+            }
+            const event = parsed as {
+              entity?: { event?: string; payload?: { payment_link?: { id?: string; notes?: { uid?: string } } } };
+            };
+            const eventName = event?.entity?.event ?? "";
+            const uid = event?.entity?.payload?.payment_link?.notes?.uid;
+            if (eventName === "payment_link.paid" && uid) {
+              try {
+                await unlockUserByUid(uid);
+                console.log(`[razorpay webhook] ${eventName} · uid ${uid}`);
+              } catch (error) {
+                console.error("[razorpay webhook] could not grant premium", error);
+                sendJson(res, 500, { ok: false, error: "Grant failed" });
+                return;
+              }
+            }
+            sendJson(res, 200, { ok: true });
+            return;
+          }
+          next();
+        } catch (error) {
+          console.error("[api middleware]", error);
+          sendJson(res, 500, { ok: false, error: error instanceof Error ? error.message : "Server error" });
+        }
+      });
+    },
+  };
+}
+
+function readRawBody(req: { on: (event: string, cb: (chunk: Buffer) => void) => unknown }): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk) => chunks.push(chunk));
+    req.on("end", () => resolve(Buffer.concat(chunks)));
+    req.on("error", reject);
+  });
+}
+
+function sendJson(res: { writeHead: (status: number, headers: Record<string, string>) => void; end: (body: string) => void }, status: number, body: unknown) {
+  res.writeHead(status, { "Content-Type": "application/json" });
+  res.end(JSON.stringify(body));
+}
+
 function vitePluginStorageProxy(): Plugin {
   return {
     name: "manus-storage-proxy",
@@ -223,7 +315,7 @@ function vitePluginStorageProxy(): Plugin {
   };
 }
 
-const plugins = [react(), tailwindcss(), jsxLocPlugin(), vitePluginManusRuntime(), vitePluginManusDebugCollector(), vitePluginStorageProxy()];
+const plugins = [react(), tailwindcss(), jsxLocPlugin(), vitePluginManusRuntime(), vitePluginManusDebugCollector(), vitePluginStorageProxy(), viteApiMiddleware()];
 
 export default defineConfig({
   plugins,
