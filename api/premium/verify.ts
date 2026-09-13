@@ -1,12 +1,11 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
+import { verifyAndUnlock } from "../../shared/premiumApi";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     if (req.method !== "POST") {
       return res.status(405).json({ ok: false, error: "Method not allowed" });
     }
-
-    const { verifyAndUnlock } = await import("../../shared/premiumApi");
 
     const authorization = req.headers.authorization ?? "";
     const idToken = authorization.startsWith("Bearer ") ? authorization.slice("Bearer ".length) : "";

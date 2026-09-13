@@ -1,15 +1,11 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
+import { createLinkForUser } from "../../shared/premiumApi";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     if (req.method !== "POST") {
       return res.status(405).json({ ok: false, error: "Method not allowed" });
     }
-
-    // Lazy import so this function only touches firebase-admin after it's a
-    // valid request. Any bootstrap/search-path issue then becomes a catchable
-    // JSON error instead of Vercel's HTML "FUNCTION_INVOCATION_FAILED" page.
-    const { createLinkForUser } = await import("../../shared/premiumApi");
 
     const authorization = req.headers.authorization ?? "";
     const idToken = authorization.startsWith("Bearer ") ? authorization.slice("Bearer ".length) : "";
