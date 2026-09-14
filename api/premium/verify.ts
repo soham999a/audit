@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { verifyAndUnlock } from "../../shared/premiumApi";
+import { verifyAndUnlock } from "../_shared";
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {

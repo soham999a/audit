@@ -1,7 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { Buffer } from "node:buffer";
-import { verifyWebhookSignature } from "../../shared/razorpay";
-import { unlockUserByUid } from "../../shared/premiumApi";
+import { verifyWebhookSignature, unlockUserByUid } from "../_shared";
 
 export const config = { api: { bodyParser: false } };
 
