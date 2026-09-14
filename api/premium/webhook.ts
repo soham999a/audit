@@ -3,7 +3,7 @@ import { Buffer } from "node:buffer";
 import crypto from "node:crypto";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
-import type { App, ServiceAccount } from "firebase-admin";
+import type { App, ServiceAccount } from "firebase-admin/app";
 
 export const config = { api: { bodyParser: false } };
 

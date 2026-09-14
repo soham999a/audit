@@ -1,6 +1,6 @@
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
-import type { App, ServiceAccount } from "firebase-admin";
+import type { App, ServiceAccount } from "firebase-admin/app";
 
 // Nothing from firebase-admin is loaded at module scope. The Vercel builder
 // compiles functions to a single CJS file, and any firebase-admin import that

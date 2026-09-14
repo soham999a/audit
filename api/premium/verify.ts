@@ -1,7 +1,7 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { readFileSync, readdirSync } from "node:fs";
 import path from "node:path";
-import type { App, ServiceAccount } from "firebase-admin";
+import type { App, ServiceAccount } from "firebase-admin/app";
 
 const API_BASE = "https://api.razorpay.com/v1";
 
