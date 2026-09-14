@@ -1,8 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import { Buffer } from "node:buffer";
 import crypto from "node:crypto";
-import { readFileSync, readdirSync } from "node:fs";
-import path from "node:path";
 import type { App, ServiceAccount } from "firebase-admin/app";
 
 export const config = { api: { bodyParser: false } };
@@ -38,7 +36,9 @@ function loadServiceAccount(): ServiceAccount | null {
     try {
       return JSON.parse(Buffer.from(fromBase64, "base64").toString("utf-8")) as ServiceAccount;
     } catch {
-      throw new Error("FIREBASE_SERVICE_ACCOUNT_B64 is not a base64-encoded service-account JSON");
+      throw new Error(
+        "FIREBASE_SERVICE_ACCOUNT_B64 is set but is NOT valid base64-encoded service-account JSON (check it on Vercel)"
+      );
     }
   }
   const envJson = process.env.FIREBASE_SERVICE_ACCOUNT;
@@ -46,35 +46,17 @@ function loadServiceAccount(): ServiceAccount | null {
     try {
       return JSON.parse(envJson) as ServiceAccount;
     } catch {
-      throw new Error("FIREBASE_SERVICE_ACCOUNT in env is not valid JSON");
+      throw new Error(
+        "FIREBASE_SERVICE_ACCOUNT is set but is NOT valid JSON (check it on Vercel — make sure it is the full service-account JSON on one line)"
+      );
     }
   }
-  const cwd = process.cwd();
-  const candidates = [
-    path.join(cwd, "firebase-service-account.json"),
-    ...findAdminSdkJson(cwd),
-  ];
-  const seen = new Set<string>();
-  for (const candidate of candidates) {
-    if (seen.has(candidate)) continue;
-    seen.add(candidate);
-    try {
-      return JSON.parse(readFileSync(candidate, "utf-8")) as ServiceAccount;
-    } catch {
-      /* try next candidate */
-    }
+  if (process.env.FIREBASE_SERVICE_ACCOUNT_B64 || process.env.FIREBASE_SERVICE_ACCOUNT) {
+    throw new Error("FIREBASE_SERVICE_ACCOUNT* env var is present but empty");
   }
-  return null;
-}
-
-function findAdminSdkJson(dir: string): string[] {
-  try {
-    return readdirSync(dir)
-      .filter((name) => /firebase-adminsdk.*\.json$/.test(name))
-      .map((name) => path.join(dir, name));
-  } catch {
-    return [];
-  }
+  throw new Error(
+    "Neither FIREBASE_SERVICE_ACCOUNT nor FIREBASE_SERVICE_ACCOUNT_B64 is set on Vercel"
+  );
 }
 
 type AdminAppModule = typeof import("firebase-admin/app");
