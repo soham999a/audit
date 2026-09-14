@@ -160,7 +160,8 @@ async function verifyAndUnlock(
     if (isFirebaseMisconfigured(error)) {
       return { status: 500, body: { ok: false, error: "Payment setup is incomplete — FIREBASE_SERVICE_ACCOUNT is missing on the server." } };
     }
-    return { status: 401, body: { ok: false, error: "Authentication required" } };
+    const reason = error instanceof Error ? error.message : "unknown error";
+    return { status: 401, body: { ok: false, error: `Authentication required (${reason})` } };
   }
 
   try {
