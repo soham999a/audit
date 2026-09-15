@@ -31,18 +31,21 @@ import {
 import {
   baseInrLabel,
   createRazorpayCheckout,
+  creditPackLabel,
   detectLocalCurrency,
   priceLabelFor,
   verifyAndUnlockPremium,
 } from "@/lib/premium";
 import {
+  decrementCreditsClient,
   getIdToken,
   signInWithEmail,
   signInWithGoogle,
   signOutCurrentUser,
   signUpWithEmail,
+  type UserCredits,
   watchAuth,
-  watchPremium,
+  watchUserCredits,
 } from "@/lib/firebase";
 
 // Paper Protocol: editorial labels, warm paper surfaces, signal red for active defects, and evidence-led density.
@@ -149,17 +152,17 @@ function detailForDimension(dimension: AuditDimension | (typeof dimensions)[numb
   return { computed, guidance, metrics, weakest, threshold };
 }
 
-function PremiumGate({ unlocked, onUnlock, price, children }: { unlocked: boolean; onUnlock: () => void; price: string; children: ReactNode }) {
-  if (unlocked) return <>{children}</>;
+function PremiumGate({ hasAccess, onUnlock, price, children }: { hasAccess: boolean; onUnlock: () => void; price: string; children: ReactNode }) {
+  if (hasAccess) return <>{children}</>;
   return (
     <div className="premium-gate">
       <div className="premium-gate-content" aria-hidden="true">{children}</div>
       <div className="premium-gate-overlay">
         <div className="premium-lock-card">
-          <span className="eyebrow">Premium insight</span>
-          <strong>Unlock the full dossier</strong>
-          <p>Findings with evidence, recommendations, why-this-score signals, and the intelligence graph are available with a one-time {price} unlock.</p>
-          <button className="premium-gate-btn" onClick={onUnlock}><Crown size={14} /> Unlock · {price}</button>
+          <span className="eyebrow">Credit required</span>
+          <strong>Unlock this content</strong>
+          <p>Use a free monthly audit or purchase a credit pack to access this content.</p>
+          <button className="premium-gate-btn" onClick={onUnlock}><Crown size={14} /> Get credits · {price}</button>
         </div>
       </div>
     </div>
@@ -182,7 +185,7 @@ export default function Home() {
   const [authReady, setAuthReady] = useState(false);
   const authUserRef = useRef(authUser);
   authUserRef.current = authUser;
-  const [premiumUnlocked, setPremiumUnlocked] = useState(false);
+  const [userCredits, setUserCredits] = useState<UserCredits>({ freeUsed: 0, freeRemaining: 2, paidCredits: 0, totalAuditsRun: 0 });
   const [payOpen, setPayOpen] = useState(false);
   const [authOpen, setAuthOpen] = useState(false);
   const [authMode, setAuthMode] = useState<"signin" | "signup">("signin");
@@ -214,22 +217,24 @@ export default function Home() {
 
   useEffect(() => {
     if (!authUser) {
-      setPremiumUnlocked(false);
+      setUserCredits({ freeUsed: 0, freeRemaining: 2, paidCredits: 0, totalAuditsRun: 0 });
       return;
     }
-    return watchPremium(authUser.uid, (status) => {
-      setPremiumUnlocked(status.premium);
+    return watchUserCredits(authUser.uid, (credits) => {
+      setUserCredits(credits);
     });
   }, [authUser?.uid]);
+
+  const hasCredits = userCredits.freeRemaining > 0 || userCredits.paidCredits > 0;
 
   const freeKeys = useMemo(() => {
     const keyOf = (d: (typeof dimensions)[number] | AuditDimension) => ("key" in d ? d.key : d.label);
     const allKeys = viewDimensions.map(keyOf);
-    if (premiumUnlocked) return new Set(allKeys);
+    if (hasCredits) return new Set(allKeys);
     const weightOf = (d: (typeof dimensions)[number] | AuditDimension) => (typeof d.weight === "number" ? d.weight : Number(String(d.weight).replace("%", "")) / 100);
     const ranked = viewDimensions.slice().sort((a, b) => b.score * weightOf(b) - a.score * weightOf(a));
     return new Set(ranked.slice(0, 2).map(keyOf));
-  }, [premiumUnlocked, viewDimensions]);
+  }, [hasCredits, viewDimensions]);
 
   useEffect(() => {
     try {
@@ -292,6 +297,47 @@ export default function Home() {
       setPayStatus("error");
       setPayError(error instanceof Error ? error.message : "Verification failed. Please try again.");
     }
+  }
+
+  async function runAudit() {
+    if (!normalized) return;
+    if (!authUser) {
+      setAuthOpen(true);
+      return;
+    }
+    if (!hasCredits) {
+      setPayOpen(true);
+      return;
+    }
+    const idToken = await getIdToken();
+    if (!idToken) {
+      setAuthOpen(true);
+      return;
+    }
+    setAuditState("running");
+    setProgress(0);
+    setAuditResult(null);
+    const decrement = await decrementCreditsClient(idToken).catch(() => ({ ok: false, remaining: 0, type: "none" }));
+    if (!decrement.ok) {
+      setAuditState("idle");
+      setPayStatus("error");
+      setPayError("No credit was available to run this audit. If you just paid, verify your payment and try again.");
+      setPayOpen(true);
+      return;
+    }
+    const resultPromise = runAuditEngine(normalized);
+    let step = 0;
+    const timer = window.setInterval(() => {
+      step += 1;
+      setProgress(Math.min(100, Math.round((step / pipeline.length) * 100)));
+      if (step >= pipeline.length) {
+        window.clearInterval(timer);
+        window.setTimeout(async () => {
+          setAuditResult(await resultPromise);
+          setAuditState("complete");
+        }, 240);
+      }
+    }, 115);
   }
 
   async function startPayment() {
@@ -367,23 +413,6 @@ export default function Home() {
     await signOutCurrentUser();
   }
 
-  function runAudit() {
-    if (!normalized) return;
-    setAuditState("running");
-    setProgress(0);
-    setAuditResult(null);
-    const resultPromise = runAuditEngine(normalized);
-    let step = 0;
-    const timer = window.setInterval(() => {
-      step += 1;
-      setProgress(Math.min(100, Math.round((step / pipeline.length) * 100)));
-      if (step >= pipeline.length) {
-        window.clearInterval(timer);
-        window.setTimeout(async () => { setAuditResult(await resultPromise); setAuditState("complete"); }, 240);
-      }
-    }, 115);
-  }
-
   const isIdle = auditState === "idle";
   const isRunning = auditState === "running";
 
@@ -408,23 +437,23 @@ export default function Home() {
 
       <main className="workspace">
         <header className="topbar"><div className="topbar-path"><span>Auditor</span><span>/</span><strong>{isIdle ? "New audit" : normalized?.replace(/^https?:\/\//, "")}</strong></div><div className="topbar-actions">{authReady && (authUser ? (
-        <div className="account-pill"><span className="account-email" title={authUser.email ?? authUser.uid}>{authUser.email ?? "Account"}</span>{premiumUnlocked && <span className="premium-badge"><Crown size={12} /> Premium</span>}<button className="icon-btn" onClick={() => void handleSignOut()} title="Sign out" aria-label="Sign out"><LogOut size={14} /></button></div>
+        <div className="account-pill"><span className="account-email" title={authUser.email ?? authUser.uid}>{authUser.email ?? "Account"}</span>{userCredits.paidCredits > 0 && <span className="premium-badge"><Crown size={12} /> {userCredits.paidCredits} credits</span>}<button className="icon-btn" onClick={() => void handleSignOut()} title="Sign out" aria-label="Sign out"><LogOut size={14} /></button></div>
       ) : (
         <button className="secondary-btn" onClick={() => setAuthOpen(true)}>Sign in</button>
       ))}<button className="icon-btn" title="Documentation"><Info size={16} /></button><button className="icon-btn" title="Refresh"><RefreshCw size={16} /></button><div className={`status-pill ${auditState === "complete" ? "complete-status" : ""}`}><StatusDot tone={auditState === "complete" ? "sage" : "red"} />{isIdle ? "Workspace ready" : isRunning ? "Analysis in progress" : "COMPLETE"}</div></div></header>
 
         {isIdle ? (
           <section className="landing-view">
-            <div className="landing-copy"><div className="section-kicker"><span className="section-number">01</span><span>Website intelligence / audit console</span></div><h1>Measure the signal<br /><em>behind the surface.</em></h1><p className="landing-intro">Does your website merely work — or does it correctly express what your organization is?</p><p className="landing-sub">Analyze technical quality, accessibility, content correctness, information architecture, semantic coherence, and intelligence architecture in one audit.</p><div className="url-form"><label htmlFor="url">Public website URL</label><div className="input-row"><Globe2 size={18} /><input id="url" value={url} onChange={(e) => setUrl(e.target.value)} onKeyDown={(e) => e.key === "Enter" && runAudit()} placeholder="https://your-website.com" /><button className="primary-btn" onClick={runAudit} disabled={!normalized}><span>Analyze website</span><ArrowUpRight size={18} /></button></div>{url && !normalized && <div className="input-error"><X size={14} /> Enter a valid public URL to begin.</div>}<div className="form-meta"><span><Clock3 size={13} /> Typical analysis: 30–120 seconds</span><span><ShieldCheck size={13} /> Public websites only</span></div><div className="proof-cues"><span><span className="proof-number">01</span> Claims → evidence</span><span><span className="proof-number">02</span> DOM → meaning</span><span><span className="proof-number">03</span> Structure → outcome</span></div></div><div className="example-row"><span>Try an example</span><button onClick={() => setUrl("https://linear.app")}>linear.app</button><button onClick={() => setUrl("https://stripe.com")}>stripe.com</button><button onClick={() => setUrl("https://example.com")}>example.com</button></div></div>
+            <div className="landing-copy"><div className="section-kicker"><span className="section-number">01</span><span>Website intelligence / audit console</span></div><h1>Measure the signal<br /><em>behind the surface.</em></h1><p className="landing-intro">Does your website merely work — or does it correctly express what your organization is?</p><p className="landing-sub">Analyze technical quality, accessibility, content correctness, information architecture, semantic coherence, and intelligence architecture in one audit.</p><div className="url-form"><label htmlFor="url">Public website URL</label><div className="input-row"><Globe2 size={18} /><input id="url" value={url} onChange={(e) => setUrl(e.target.value)} onKeyDown={(e) => e.key === "Enter" && runAudit()} placeholder="https://your-website.com" /><button className="primary-btn" onClick={runAudit} disabled={!normalized}><span>Analyze website</span><ArrowUpRight size={18} /></button></div>{url && !normalized && <div className="input-error"><X size={14} /> Enter a valid public URL to begin.</div>}<div className="form-meta"><span><Clock3 size={13} /> Typical analysis: 30–120 seconds</span><span><ShieldCheck size={13} /> Public websites only</span>{authUser && <span><Crown size={13} /> {userCredits.freeRemaining > 0 ? `${userCredits.freeRemaining} free audit${userCredits.freeRemaining !== 1 ? "s" : ""} remaining` : userCredits.paidCredits > 0 ? `${userCredits.paidCredits} credit${userCredits.paidCredits !== 1 ? "s" : ""} remaining` : <button className="link-btn" onClick={() => setPayOpen(true)}>Buy credits</button>}</span>}</div><div className="proof-cues"><span><span className="proof-number">01</span> Claims → evidence</span><span><span className="proof-number">02</span> DOM → meaning</span><span><span className="proof-number">03</span> Structure → outcome</span></div></div><div className="example-row"><span>Try an example</span><button onClick={() => setUrl("https://linear.app")}>linear.app</button><button onClick={() => setUrl("https://stripe.com")}>stripe.com</button><button onClick={() => setUrl("https://example.com")}>example.com</button></div></div>
             <div className="landing-visual"><div className="visual-label"><span>Intelligence graph / preview</span><span>01—04</span></div><div className="graph-card"><img src="/manus-storage/matrix-intelligence-graph_ffc5f9b4.png" alt="Abstract intelligence graph" /><div className="graph-overlay"><div className="graph-node node-a">MISSION<span>central thesis</span></div><div className="graph-node node-b">CAPABILITY<span>what it can do</span></div><div className="graph-node node-c">OUTCOME<span>proof / signal</span></div><div className="graph-line line-1" /><div className="graph-line line-2" /></div></div><div className="visual-caption"><span className="caption-mark">↳</span><p>The audit maps relationships among mission, capabilities, products, research, and outcomes — not just isolated page errors.</p></div></div>
           </section>
         ) : isRunning ? (
           <section className="running-view"><div className="section-kicker"><span className="section-number">02</span><span>Live analysis / {normalized?.replace(/^https?:\/\//, "")}</span></div><div className="running-center"><div className="scan-orbit"><div className="orbit-dot" /><Search size={30} /></div><div className="running-percent">{progress}<small>%</small></div><h2>Reading the website as a system.</h2><p>Collecting evidence across structure, meaning, and relationships. This console will resolve when the final score is defensible.</p><div className="progress-track"><span style={{ width: `${progress}%` }} /></div><div className="running-current"><span>Current signal</span><strong>{pipeline[Math.min(pipeline.length - 1, Math.floor(progress / (100 / pipeline.length)))]}</strong></div></div></section>
         ) : (
-          <section className="results-view"><div className="results-header"><div><div className="section-kicker"><span className="section-number">03</span><span>Audit dossier / {normalized?.replace(/^https?:\/\//, "")}</span></div><h1>Website intelligence<br /><em>quality score.</em></h1></div><button className="secondary-btn" onClick={() => setAuditState("idle")}><RefreshCw size={15} /> New audit</button></div><div className="audit-meta-row"><div><span>Audited URL</span><strong>{normalized}</strong></div><div><span>Crawl scope</span><strong>{auditResult?.pagesAnalyzed ?? 0} analyzed / {auditResult?.pagesRequested ?? 20} requested</strong></div><div><span>Coverage</span><strong>{auditResult?.crawlCoverage ?? 0}% · {auditResult?.crawlErrors ?? 0} errors</strong></div><div><span>Engine</span><strong>Matrix v1.0.0</strong></div></div><div className="tabs"><button className={activeTab === "overview" ? "selected" : ""} onClick={() => setActiveTab("overview")}>Overview</button><button className={activeTab === "findings" ? "selected" : ""} onClick={() => setActiveTab("findings")}>Findings <b>{viewFindings.length}</b></button><button className={activeTab === "graph" ? "selected" : ""} onClick={() => setActiveTab("graph")}>Intelligence graph</button></div>{activeTab === "overview" && <><div className="score-band"><div className="score-intro"><span className="eyebrow">Overall website intelligence quality</span><h2>{scoreLabel(overall)}, with<br /><em>{auditResult?.organizationalThesis ?? "site-specific signals"} signals.</em></h2><p>{auditResult ? `${auditResult.semanticEntities.length} entities and ${auditResult.semanticRelationships.length} relationships were extracted from the submitted URL. The weakest measured signal is ${auditResult.dimensionScores.slice().sort((a, b) => a.score - b.score)[0]?.label.toLowerCase()}.` : "The score will be calculated from collected website metrics after the audit completes."}</p><div className="score-legend"><span><StatusDot tone="sage" /> Strong: 80–89</span><span><StatusDot tone="amber" /> Refinement zone: 60–79</span></div></div><Gauge score={overall} /><div className="band-aside"><span className="eyebrow">Confidence</span><strong>{auditResult?.confidence ?? "Pending"}</strong><p>Derived from crawl coverage, render success, metric availability, and semantic coverage.</p><div className="mini-rule" /><span className="eyebrow">Primary diagnosis</span><strong>{auditResult?.findings[0]?.metric ?? "Awaiting metrics"}</strong><p>{auditResult?.findings[0]?.detail ?? "Run an audit to see the strongest measured signal."}</p></div></div><div className="grading-scale"><div><span className="eyebrow">Grading scale</span><strong>Interpret the signal</strong></div><div className="grading-items"><span><b>90–100</b> Intelligence-grade</span><span><b>80–89</b> Strong</span><span><b>70–79</b> Good but inconsistent</span><span><b>60–69</b> Communication debt</span><span><b>&lt;60</b> Architecture not successfully communicated</span></div></div>{!premiumUnlocked && auditResult && <div className="premium-strip"><Crown size={16} /><div><strong>This dossier is premium.</strong><p>Unlock findings, recommendations, the intelligence graph, and every dimension breakdown for a one-time {priceLabel}.</p></div><button onClick={openUnlock}><Crown size={13} /> Unlock · {priceLabel}</button></div>}<div className="dimensions-heading"><span className="eyebrow">Score dimensions</span><span>Weighted model / 100 points</span></div><div className="dimension-list">{viewDimensions.map((dimension, index) => { const Icon = "icon" in dimension ? dimension.icon : Fingerprint; const details = detailForDimension(dimension); const computedDimension = "metrics" in dimension ? dimension : null; const dimensionKey = computedDimension?.key ?? dimension.label; const note = "note" in dimension ? dimension.note : `${details.metrics.map((metric) => `${metric.label}: ${metric.value}`).join(" · ")} · ${computedDimension?.formula ?? "computed signal model"}`; const weight = typeof dimension.weight === "number" ? `${Math.round(dimension.weight * 100)}%` : dimension.weight; const totalMetricWeight = details.metrics.reduce((sum, metric) => sum + metric.weight, 0); const isExpanded = expandedDimension === dimensionKey;
-    const isLocked = !premiumUnlocked && !freeKeys.has(dimensionKey);
-    const rowNote = isLocked ? "Locked — premium insight. Unlock to inspect this dimension." : note;
-    return <div className={`dimension-block ${isExpanded ? "expanded" : ""}`} key={dimension.label}><button className="dimension-row" onClick={() => (isLocked ? openUnlock() : setExpandedDimension(isExpanded ? null : dimensionKey))} aria-expanded={isLocked ? false : isExpanded} aria-label={isLocked ? `Unlock ${dimension.label} — premium insight` : undefined}><div className="dimension-index">0{index + 1}</div><Icon size={18} className={`dimension-icon ${dimension.accent}`} /><div className="dimension-name"><strong>{dimension.label}</strong><span>{rowNote}</span></div><div className="dimension-weight">{weight}</div><div className="dimension-bar"><span className={dimension.accent} style={{ width: `${dimension.score}%` }} /></div><div className={isLocked ? "dimension-score dimension-locked" : "dimension-score"}>{isLocked ? <Lock size={14} className="dimension-lock-icon" aria-hidden="true" /> : dimension.score}</div><ChevronDown className={isExpanded ? "rotated" : ""} size={16} /></button>{isExpanded && <div className="dimension-detail"><div className="detail-intent"><div><span className="eyebrow">Decision signal</span><strong>{details.guidance.decision}</strong><p>{details.guidance.rationale}</p></div><span className={`detail-priority ${dimension.score < 70 ? "urgent" : ""}`}>{details.guidance.priority}</span></div>{details.computed ? <><div className="detail-metrics">{details.metrics.map((metric) => { const contribution = dimension.score * (metric.weight / totalMetricWeight); return <div className="detail-metric" key={metric.label}><div><strong>{metric.label}</strong><span>{metric.passed} passed · {metric.failed} flagged</span></div><b>{metric.value.toFixed(1)}</b><div className="metric-track"><span style={{ width: `${metric.value}%` }} /></div><small>{metric.weight}% signal weight · {contribution.toFixed(1)} pts within dimension</small></div>})}</div><div className="detail-formula"><span className="eyebrow">How the score is built</span><code>{computedDimension!.formula}</code><span className="formula-contribution">{dimension.score.toFixed(1)} × {Math.round(computedDimension!.weight * 100)}% = <b>{computedDimension!.contribution.toFixed(1)} weighted points</b></span></div><div className="detail-action"><div><span className="eyebrow">Strategic recommendation</span><strong>{details.guidance.action}</strong><p>{details.threshold} Re-run after remediation to confirm the score moved because the underlying evidence improved.</p></div><ArrowUpRight size={18} /></div></> : <div className="detail-action"><div><span className="eyebrow">Strategic recommendation</span><strong>{details.guidance.action}</strong></div><ArrowUpRight size={18} /></div>}</div>}</div>})}</div><PremiumGate unlocked={premiumUnlocked} onUnlock={openUnlock} price={priceLabel}><div className="trace-grid"><div className="why-score"><span className="eyebrow">Why this score?</span><strong>Largest measured contributors</strong>{(auditResult?.whyScore ?? []).map((item) => <div className="why-row" key={item.label}><span className={item.sign === "+" ? "positive" : "negative"}>{item.sign}</span><span>{item.label}</span><b>{item.value}</b></div>)}</div><div className="audit-trace"><div className="trace-head"><span className="eyebrow">Developer-visible audit trace</span><span>{auditResult?.auditId}</span></div>{(auditResult?.trace ?? []).map((line) => <code key={line}>{line}</code>)}</div></div></PremiumGate></>}{activeTab === "findings" && <PremiumGate unlocked={premiumUnlocked} onUnlock={openUnlock} price={priceLabel}><div className="findings-layout"><div className="findings-list"><div className="findings-summary"><span className="eyebrow">Priority findings</span><strong>{viewFindings.length} findings require attention</strong><p>Evidence is attached to every finding. Unsupported claims are reported as “evidence not found,” never as false.</p></div>{viewFindings.map((finding) => <button className={`finding-row ${finding.severity}`} key={finding.title} onClick={() => setSelectedFinding(finding)}><div className="finding-severity"><StatusDot tone={finding.severity === "critical" ? "red" : finding.severity === "high" ? "amber" : "blue"} /><span>{finding.severity}</span></div><div><strong>{finding.title}</strong><p>{finding.detail}</p></div><ArrowUpRight size={16} /></button>)}</div><div className="recommendations"><span className="eyebrow">Recommended next moves</span>{(auditResult?.recommendations ?? []).map((recommendation, index) => <div className="recommendation-card" key={recommendation.title}><span>0{index + 1}</span><div><strong>{recommendation.title}</strong><p>{recommendation.detail} Expected impact: {recommendation.impact}.</p></div><ArrowUpRight size={16} /></div>)}</div></div></PremiumGate>}{activeTab === "graph" && <PremiumGate unlocked={premiumUnlocked} onUnlock={openUnlock} price={priceLabel}><div className="graph-results"><div className="graph-results-copy"><span className="eyebrow">Inferred information model</span><h2>{auditResult?.organizationalThesis ?? "Website"}.<br /><em>System graph.</em></h2><p>The graph engine inferred this information model from the submitted URL. Every node and relationship is derived from the completed audit result.</p><div className="graph-stat"><strong>{auditResult ? auditResult.graph.relationshipClarity.toFixed(2) : "—"}</strong><span>relationship clarity index</span><small>{auditResult ? "Weighted from architecture, linking, navigation, and discoverability signals." : "Calculated after the audit completes."}</small></div>{auditResult && <div className="graph-inputs"><span className="eyebrow">Index inputs</span>{auditResult.graph.relationshipInputs.map((input) => <div key={input.label}><span>{input.label}</span><b>{input.value.toFixed(1)} <small>{input.weight}%</small></b></div>)}</div>}</div><div className="graph-map"><div className="map-node center">{auditResult?.organizationalThesis?.toUpperCase()}<span>detected thesis</span></div>{(auditResult?.graph.nodes ?? []).map((node, index) => <div className={`map-node graph-node-${index} ${node.tone}`} key={node.label}>{node.label.toUpperCase()}<span>{node.sub}</span></div>)}{(auditResult?.semanticRelationships ?? []).slice(0, 5).map((_, index) => <div className={`map-connector c-${index}`} key={index} />)}</div></div></PremiumGate>}</section>
+          <section className="results-view"><div className="results-header"><div><div className="section-kicker"><span className="section-number">03</span><span>Audit dossier / {normalized?.replace(/^https?:\/\//, "")}</span></div><h1>Website intelligence<br /><em>quality score.</em></h1></div><button className="secondary-btn" onClick={() => setAuditState("idle")}><RefreshCw size={15} /> New audit</button></div><div className="audit-meta-row"><div><span>Audited URL</span><strong>{normalized}</strong></div><div><span>Crawl scope</span><strong>{auditResult?.pagesAnalyzed ?? 0} analyzed / {auditResult?.pagesRequested ?? 20} requested</strong></div><div><span>Coverage</span><strong>{auditResult?.crawlCoverage ?? 0}% · {auditResult?.crawlErrors ?? 0} errors</strong></div><div><span>Engine</span><strong>Matrix v1.0.0</strong></div></div><div className="tabs"><button className={activeTab === "overview" ? "selected" : ""} onClick={() => setActiveTab("overview")}>Overview</button><button className={activeTab === "findings" ? "selected" : ""} onClick={() => setActiveTab("findings")}>Findings <b>{viewFindings.length}</b></button><button className={activeTab === "graph" ? "selected" : ""} onClick={() => setActiveTab("graph")}>Intelligence graph</button></div>{activeTab === "overview" && <><div className="score-band"><div className="score-intro"><span className="eyebrow">Overall website intelligence quality</span><h2>{scoreLabel(overall)}, with<br /><em>{auditResult?.organizationalThesis ?? "site-specific signals"} signals.</em></h2><p>{auditResult ? `${auditResult.semanticEntities.length} entities and ${auditResult.semanticRelationships.length} relationships were extracted from the submitted URL. The weakest measured signal is ${auditResult.dimensionScores.slice().sort((a, b) => a.score - b.score)[0]?.label.toLowerCase()}.` : "The score will be calculated from collected website metrics after the audit completes."}</p><div className="score-legend"><span><StatusDot tone="sage" /> Strong: 80–89</span><span><StatusDot tone="amber" /> Refinement zone: 60–79</span></div></div><Gauge score={overall} /><div className="band-aside"><span className="eyebrow">Confidence</span><strong>{auditResult?.confidence ?? "Pending"}</strong><p>Derived from crawl coverage, render success, metric availability, and semantic coverage.</p><div className="mini-rule" /><span className="eyebrow">Primary diagnosis</span><strong>{auditResult?.findings[0]?.metric ?? "Awaiting metrics"}</strong><p>{auditResult?.findings[0]?.detail ?? "Run an audit to see the strongest measured signal."}</p></div></div><div className="grading-scale"><div><span className="eyebrow">Grading scale</span><strong>Interpret the signal</strong></div><div className="grading-items"><span><b>90–100</b> Intelligence-grade</span><span><b>80–89</b> Strong</span><span><b>70–79</b> Good but inconsistent</span><span><b>60–69</b> Communication debt</span><span><b>&lt;60</b> Architecture not successfully communicated</span></div></div>{auditResult && <div className="premium-strip"><Crown size={16} /><div><strong>{hasCredits ? `${userCredits.freeRemaining + userCredits.paidCredits} audit credit${userCredits.freeRemaining + userCredits.paidCredits !== 1 ? "s" : ""} remaining` : "This audit used your last credit"}</strong><p>Every audit costs one credit · 2 free per month · {userCredits.totalAuditsRun} audits run in total.</p></div>{!hasCredits && <button onClick={() => setPayOpen(true)}><Crown size={13} /> Buy {creditPackLabel()}</button>}</div>}<div className="dimensions-heading"><span className="eyebrow">Score dimensions</span><span>Weighted model / 100 points</span></div><div className="dimension-list">{viewDimensions.map((dimension, index) => { const Icon = "icon" in dimension ? dimension.icon : Fingerprint; const details = detailForDimension(dimension); const computedDimension = "metrics" in dimension ? dimension : null; const dimensionKey = computedDimension?.key ?? dimension.label; const note = "note" in dimension ? dimension.note : `${details.metrics.map((metric) => `${metric.label}: ${metric.value}`).join(" · ")} · ${computedDimension?.formula ?? "computed signal model"}`; const weight = typeof dimension.weight === "number" ? `${Math.round(dimension.weight * 100)}%` : dimension.weight; const totalMetricWeight = details.metrics.reduce((sum, metric) => sum + metric.weight, 0); const isExpanded = expandedDimension === dimensionKey;
+    const isLocked = !hasCredits && !freeKeys.has(dimensionKey);
+    const rowNote = isLocked ? "Locked — credits required. Use a free audit or buy credits." : note;
+    return <div className={`dimension-block ${isExpanded ? "expanded" : ""}`} key={dimension.label}><button className="dimension-row" onClick={() => (isLocked ? openUnlock() : setExpandedDimension(isExpanded ? null : dimensionKey))} aria-expanded={isLocked ? false : isExpanded} aria-label={isLocked ? `Unlock ${dimension.label} — credits required` : undefined}><div className="dimension-index">0{index + 1}</div><Icon size={18} className={`dimension-icon ${dimension.accent}`} /><div className="dimension-name"><strong>{dimension.label}</strong><span>{rowNote}</span></div><div className="dimension-weight">{weight}</div><div className="dimension-bar"><span className={dimension.accent} style={{ width: `${dimension.score}%` }} /></div><div className={isLocked ? "dimension-score dimension-locked" : "dimension-score"}>{isLocked ? <Lock size={14} className="dimension-lock-icon" aria-hidden="true" /> : dimension.score}</div><ChevronDown className={isExpanded ? "rotated" : ""} size={16} /></button>{isExpanded && <div className="dimension-detail"><div className="detail-intent"><div><span className="eyebrow">Decision signal</span><strong>{details.guidance.decision}</strong><p>{details.guidance.rationale}</p></div><span className={`detail-priority ${dimension.score < 70 ? "urgent" : ""}`}>{details.guidance.priority}</span></div>{details.computed ? <><div className="detail-metrics">{details.metrics.map((metric) => { const contribution = dimension.score * (metric.weight / totalMetricWeight); return <div className="detail-metric" key={metric.label}><div><strong>{metric.label}</strong><span>{metric.passed} passed · {metric.failed} flagged</span></div><b>{metric.value.toFixed(1)}</b><div className="metric-track"><span style={{ width: `${metric.value}%` }} /></div><small>{metric.weight}% signal weight · {contribution.toFixed(1)} pts within dimension</small></div>})}</div><div className="detail-formula"><span className="eyebrow">How the score is built</span><code>{computedDimension!.formula}</code><span className="formula-contribution">{dimension.score.toFixed(1)} × {Math.round(computedDimension!.weight * 100)}% = <b>{computedDimension!.contribution.toFixed(1)} weighted points</b></span></div><div className="detail-action"><div><span className="eyebrow">Strategic recommendation</span><strong>{details.guidance.action}</strong><p>{details.threshold} Re-run after remediation to confirm the score moved because the underlying evidence improved.</p></div><ArrowUpRight size={18} /></div></> : <div className="detail-action"><div><span className="eyebrow">Strategic recommendation</span><strong>{details.guidance.action}</strong></div><ArrowUpRight size={18} /></div>}</div>}</div>})}</div><PremiumGate hasAccess={true} onUnlock={openUnlock} price={priceLabel}><div className="trace-grid"><div className="why-score"><span className="eyebrow">Why this score?</span><strong>Largest measured contributors</strong>{(auditResult?.whyScore ?? []).map((item) => <div className="why-row" key={item.label}><span className={item.sign === "+" ? "positive" : "negative"}>{item.sign}</span><span>{item.label}</span><b>{item.value}</b></div>)}</div><div className="audit-trace"><div className="trace-head"><span className="eyebrow">Developer-visible audit trace</span><span>{auditResult?.auditId}</span></div>{(auditResult?.trace ?? []).map((line) => <code key={line}>{line}</code>)}</div></div></PremiumGate></>}{activeTab === "findings" && <PremiumGate hasAccess={true} onUnlock={openUnlock} price={priceLabel}><div className="findings-layout"><div className="findings-list"><div className="findings-summary"><span className="eyebrow">Priority findings</span><strong>{viewFindings.length} findings require attention</strong><p>Evidence is attached to every finding. Unsupported claims are reported as “evidence not found,” never as false.</p></div>{viewFindings.map((finding) => <button className={`finding-row ${finding.severity}`} key={finding.title} onClick={() => setSelectedFinding(finding)}><div className="finding-severity"><StatusDot tone={finding.severity === "critical" ? "red" : finding.severity === "high" ? "amber" : "blue"} /><span>{finding.severity}</span></div><div><strong>{finding.title}</strong><p>{finding.detail}</p></div><ArrowUpRight size={16} /></button>)}</div><div className="recommendations"><span className="eyebrow">Recommended next moves</span>{(auditResult?.recommendations ?? []).map((recommendation, index) => <div className="recommendation-card" key={recommendation.title}><span>0{index + 1}</span><div><strong>{recommendation.title}</strong><p>{recommendation.detail} Expected impact: {recommendation.impact}.</p></div><ArrowUpRight size={16} /></div>)}</div></div></PremiumGate>}{activeTab === "graph" && <PremiumGate hasAccess={true} onUnlock={openUnlock} price={priceLabel}><div className="graph-results"><div className="graph-results-copy"><span className="eyebrow">Inferred information model</span><h2>{auditResult?.organizationalThesis ?? "Website"}.<br /><em>System graph.</em></h2><p>The graph engine inferred this information model from the submitted URL. Every node and relationship is derived from the completed audit result.</p><div className="graph-stat"><strong>{auditResult ? auditResult.graph.relationshipClarity.toFixed(2) : "—"}</strong><span>relationship clarity index</span><small>{auditResult ? "Weighted from architecture, linking, navigation, and discoverability signals." : "Calculated after the audit completes."}</small></div>{auditResult && <div className="graph-inputs"><span className="eyebrow">Index inputs</span>{auditResult.graph.relationshipInputs.map((input) => <div key={input.label}><span>{input.label}</span><b>{input.value.toFixed(1)} <small>{input.weight}%</small></b></div>)}</div>}</div><div className="graph-map"><div className="map-node center">{auditResult?.organizationalThesis?.toUpperCase()}<span>detected thesis</span></div>{(auditResult?.graph.nodes ?? []).map((node, index) => <div className={`map-node graph-node-${index} ${node.tone}`} key={node.label}>{node.label.toUpperCase()}<span>{node.sub}</span></div>)}{(auditResult?.semanticRelationships ?? []).slice(0, 5).map((_, index) => <div className={`map-connector c-${index}`} key={index} />)}</div></div></PremiumGate>}</section>
         )}
       </main>
       {selectedFinding && <div className="drawer-backdrop" onClick={() => setSelectedFinding(null)}><aside className="finding-drawer" onClick={(e) => e.stopPropagation()}><div className="drawer-header"><div><span className="eyebrow">Finding / evidence trace</span><h2>{selectedFinding.title}</h2></div><button className="icon-btn" onClick={() => setSelectedFinding(null)}><X size={18} /></button></div><div className={`drawer-severity ${selectedFinding.severity}`}><TriangleAlert size={16} /> {selectedFinding.severity} priority</div><p className="drawer-detail">{selectedFinding.detail}</p><div className="evidence-box"><span className="eyebrow">Observed evidence</span><p>{selectedFinding.evidence}</p><a href={`https://${normalized?.replace(/^https?:\/\//, "")}${selectedFinding.page}`} target="_blank" rel="noreferrer">Open {selectedFinding.page}<ExternalLink size={14} /></a></div><div className="drawer-section"><span className="eyebrow">Why it matters</span><p>Quality is not only a pass/fail property. This signal affects the coherence of the website’s conceptual model and reduces the visitor’s ability to follow a clear path from promise to proof.</p></div><div className="drawer-section"><span className="eyebrow">Recommended action</span><p>Give this claim a visible evidence path. Link to the most specific supporting page and name the outcome, not only the capability.</p></div></aside></div>}
@@ -435,30 +464,30 @@ export default function Home() {
               <div className="premium-modal-title">
                 <div className="premium-mark"><Crown size={19} /></div>
                 <div>
-                  <span className="eyebrow">One-time unlock / lifetime access</span>
-                  <h2 id="premium-title">Full premium dossier</h2>
-                  <p>Razorpay-secured checkout · unlocks permanently on your account.</p>
+                  <span className="eyebrow">{creditPackLabel()} / one-time purchase</span>
+                  <h2 id="premium-title">Buy audit credits</h2>
+                  <p>Razorpay-secured checkout · credits added to your account instantly.</p>
                 </div>
               </div>
               <button className="icon-btn" onClick={() => setPayOpen(false)} aria-label="Close"><X size={18} /></button>
             </div>
             <div className="premium-price-row"><b>{priceLabel}</b><span>base {convertedLabel}</span></div>
             <ul className="premium-features">
-              <li><Check size={14} /> <span>All 8 weighted dimensions <b>with metrics and formulas</b></span></li>
-              <li><Check size={14} /> <span>Priority findings <b>with attached evidence</b></span></li>
-              <li><Check size={14} /> <span>Recommendations, <b>why-this-score</b>, and the intelligence graph</span></li>
-              <li><Check size={14} /> <span>Developer-visible <b>audit trace</b></span></li>
+              <li><Check size={14} /> <span>Get <b>{10} audit credits</b> for {priceLabel}</span></li>
+              <li><Check size={14} /> <span>Each credit = <b>one full website audit</b></span></li>
+              <li><Check size={14} /> <span>All 8 dimensions, findings, <b>intelligence graph</b></span></li>
+              <li><Check size={14} /> <span>Credits <b>never expire</b> on your account</span></li>
             </ul>
             <button className="premium-primary-btn" onClick={startPayment} disabled={payStatus === "creating" || payStatus === "verifying"}>
-              {payStatus === "creating" ? (<><Loader2 size={15} className="spin" /> Preparing checkout…</>) : (<><Crown size={15} /> Pay {priceLabel} with Razorpay</>)}
+              {payStatus === "creating" ? (<><Loader2 size={15} className="spin" /> Preparing checkout…</>) : (<><Crown size={15} /> Pay {priceLabel} for {creditPackLabel()}</>)}
             </button>
             <div className="premium-or">already paid?</div>
             <button className="premium-confirm-btn" onClick={() => void confirmPayment()} disabled={payStatus === "verifying" || payStatus === "creating"}>
               {payStatus === "verifying" ? (<><Loader2 size={13} className="spin" /> Verifying payment…</>) : (<>I've paid — verify my payment</>)}
             </button>
             {payError && (<div className="premium-error"><CircleAlert size={14} /> {payError}</div>)}
-            <p className="premium-note">Premium unlocks on your account only after Razorpay confirms the payment. Returning from checkout verifies automatically; you can also press the button above.</p>
-            <p className="premium-note">Payments are processed by Razorpay. Your {priceLabel} is converted from the ₹50 base price for your region.</p>
+            <p className="premium-note">Credits are added to your account only after Razorpay confirms the payment. Returning from checkout verifies automatically; you can also press the button above.</p>
+            <p className="premium-note">Payments are processed by Razorpay. Your {priceLabel} is converted from the ₹{49} base price for your region. You get 2 free audits per month.</p>
           </aside>
         </div>
       )}

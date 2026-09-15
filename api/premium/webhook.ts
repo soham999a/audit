@@ -96,23 +96,28 @@ function adminApp(admin: AdminBundle): App {
   return admin.getApps()[0] as App;
 }
 
-async function setUserPremium(uid: string, premium: boolean): Promise<void> {
+const CREDIT_PACK_SIZE = 10;
+
+async function grantCredits(uid: string, credits: number): Promise<void> {
   const [admin, firestore] = await Promise.all([
     loadAdmin(),
     import("firebase-admin/firestore"),
   ]);
-  await firestore
-    .getFirestore(adminApp(admin))
-    .collection("users")
-    .doc(uid)
-    .set({ premium, premiumSince: firestore.Timestamp.now() }, { merge: true });
+  const db = firestore.getFirestore(adminApp(admin));
+  const ref = db.collection("users").doc(uid);
+  await db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const data = snap.exists ? (snap.data() as Record<string, unknown>) : {};
+    const current = typeof data.paidCredits === "number" ? data.paidCredits : 0;
+    tx.set(ref, { paidCredits: current + credits }, { merge: true });
+  });
 }
 
 async function unlockUserByUid(uid: string | undefined): Promise<void> {
   if (!uid) {
     throw new Error("Missing uid in payment link notes");
   }
-  await setUserPremium(uid, true);
+  await grantCredits(uid, CREDIT_PACK_SIZE);
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -143,7 +148,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         try {
           await unlockUserByUid(uid);
         } catch (error) {
-          console.error("[razorpay webhook] could not grant premium", error);
+          console.error("[razorpay webhook] could not grant credits", error);
           return res.status(500).json({ ok: false, error: "Grant failed" });
         }
       }

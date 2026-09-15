@@ -1,6 +1,6 @@
-import { amountForCurrency, PREMIUM_PRICE_INR, SUPPORTED_CURRENCIES } from "./premium";
+import { amountForCurrency, CREDIT_PACK_SIZE, CREDIT_PACK_PRICE_INR, SUPPORTED_CURRENCIES } from "./premium";
 import { createPaymentLink, isPaymentLinkPaid } from "./razorpay";
-import { setUserPremium, verifyIdToken } from "./firebaseAdmin";
+import { grantCredits, setUserPremium, verifyIdToken } from "./firebaseAdmin";
 
 type ApiResult = { status: number; body: Record<string, unknown> };
 
@@ -37,11 +37,11 @@ export async function createLinkForUser(
       currency,
       callbackUrl,
       uid,
-      description: `Matrix Website Auditor — one-time premium unlock (base ${PREMIUM_PRICE_INR} INR)`,
+      description: `Matrix Website Auditor — ${CREDIT_PACK_SIZE} audit credits (base ${CREDIT_PACK_PRICE_INR} INR)`,
     });
     return {
       status: 200,
-      body: { ok: true, id: link.id, short_url: link.short_url, currency, amount, baseInr: PREMIUM_PRICE_INR },
+      body: { ok: true, id: link.id, short_url: link.short_url, currency, amount, baseInr: CREDIT_PACK_PRICE_INR },
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to create payment link";
@@ -68,9 +68,9 @@ export async function verifyAndUnlock(idToken: string, rawId: string | undefined
   try {
     const paid = await isPaymentLinkPaid(paymentLinkId);
     if (paid) {
-      await setUserPremium(uid, true);
+      await grantCredits(uid, CREDIT_PACK_SIZE);
     }
-    return { status: 200, body: { ok: true, paid, premium: paid } };
+    return { status: 200, body: { ok: true, paid, credits: paid ? CREDIT_PACK_SIZE : 0 } };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Verification failed";
     return { status: 502, body: { ok: false, error: message } };
@@ -78,10 +78,10 @@ export async function verifyAndUnlock(idToken: string, rawId: string | undefined
 }
 
 // Used by the Razorpay webhook: the payment is already server-confirmed by
-// Razorpay's signature, so we can grant premium directly to the link's owner.
+// Razorpay's signature, so we can grant credits directly to the link's owner.
 export async function unlockUserByUid(uid: string | undefined): Promise<void> {
   if (!uid) {
     throw new Error("Missing uid in payment link notes");
   }
-  await setUserPremium(uid, true);
+  await grantCredits(uid, CREDIT_PACK_SIZE);
 }

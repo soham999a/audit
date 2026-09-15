@@ -1,4 +1,4 @@
-import { CURRENCIES, DEFAULT_CURRENCY } from "@shared/premium";
+import { CREDIT_PACK_SIZE, CREDIT_PACK_PRICE_INR, CURRENCIES, DEFAULT_CURRENCY } from "@shared/premium";
 
 export function detectLocalCurrency(): string {
   const language = navigator.language || "en-US";
@@ -35,14 +35,18 @@ export function formatCurrency(
 
 export function priceLabelFor(currency: string, locale?: string): string {
   const entry = CURRENCIES[currency] ?? CURRENCIES[DEFAULT_CURRENCY];
-  if (currency === "INR") return "₹50";
+  if (currency === "INR") return `₹${CREDIT_PACK_PRICE_INR}`;
   return formatCurrency(currency, entry.amount, locale);
 }
 
 export function baseInrLabel(currency: string, locale?: string): string {
-  if (currency === "INR") return "₹50";
+  if (currency === "INR") return `₹${CREDIT_PACK_PRICE_INR}`;
   const entry = CURRENCIES[currency] ?? CURRENCIES[DEFAULT_CURRENCY];
-  return `≈ ${formatCurrency(currency, entry.amount, locale)} (₹50 base)`;
+  return `≈ ${formatCurrency(currency, entry.amount, locale)} (₹${CREDIT_PACK_PRICE_INR} base)`;
+}
+
+export function creditPackLabel(): string {
+  return `${CREDIT_PACK_SIZE} audit credits`;
 }
 
 export type PaymentLinkResponse = {

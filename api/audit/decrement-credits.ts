@@ -1,43 +1,8 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
+import { Buffer } from "node:buffer";
 import type { App, ServiceAccount } from "firebase-admin/app";
 
-const API_BASE = "https://api.razorpay.com/v1";
-const CREDIT_PACK_SIZE = 10;
-
-function authHeaders(): Record<string, string> {
-  const keyId = process.env.RAZORPAY_KEY_ID;
-  const keySecret = process.env.RAZORPAY_KEY_SECRET;
-  if (!keyId || !keySecret) {
-    throw new Error("Razorpay is not configured (RAZORPAY_KEY_ID / RAZORPAY_KEY_SECRET missing)");
-  }
-  return {
-    Authorization: `Basic ${Buffer.from(`${keyId}:${keySecret}`).toString("base64")}`,
-    "Content-Type": "application/json",
-  };
-}
-
-type RazorpayErrorBody = { error?: { description?: string; field?: string } };
-
-async function getPaymentLink(paymentLinkId: string): Promise<{
-  id: string;
-  status: string;
-  amount?: number;
-  currency?: string;
-}> {
-  const response = await fetch(`${API_BASE}/payment_links/${paymentLinkId}`, {
-    headers: authHeaders(),
-  });
-  const payload = (await response.json()) as Record<string, unknown> & RazorpayErrorBody;
-  if (!response.ok) {
-    throw new Error(payload.error?.description ?? `Razorpay request failed (${response.status})`);
-  }
-  return payload as unknown as { id: string; status: string; amount?: number; currency?: string };
-}
-
-async function isPaymentLinkPaid(paymentLinkId: string): Promise<boolean> {
-  const link = await getPaymentLink(paymentLinkId);
-  return link.status === "paid";
-}
+const FREE_AUDITS_LIMIT = 2;
 
 function loadServiceAccount(): ServiceAccount | null {
   const fromBase64 = process.env.FIREBASE_SERVICE_ACCOUNT_B64;
@@ -111,56 +76,48 @@ async function verifyIdToken(idToken: string): Promise<string> {
   return decoded.uid;
 }
 
-async function grantCredits(uid: string, credits: number): Promise<void> {
+async function decrementCredits(uid: string): Promise<{ ok: boolean; remaining: number; type: string }> {
   const [admin, firestore] = await Promise.all([
     loadAdmin(),
     import("firebase-admin/firestore"),
   ]);
   const db = firestore.getFirestore(adminApp(admin));
   const ref = db.collection("users").doc(uid);
-  await db.runTransaction(async (tx) => {
+
+  return await db.runTransaction(async (tx) => {
     const snap = await tx.get(ref);
     const data = snap.exists ? (snap.data() as Record<string, unknown>) : {};
-    const current = typeof data.paidCredits === "number" ? data.paidCredits : 0;
-    tx.set(ref, { paidCredits: current + credits }, { merge: true });
+
+    const now = firestore.Timestamp.now();
+    let freeUsed = typeof data.freeAuditsUsedThisMonth === "number" ? data.freeAuditsUsedThisMonth : 0;
+    let freeResetDate: firestore.Timestamp | null = data.freeAuditResetDate instanceof firestore.Timestamp
+      ? data.freeAuditResetDate as firestore.Timestamp
+      : null;
+
+    if (!freeResetDate || (now.toMillis() - freeResetDate.toMillis()) > 30 * 24 * 60 * 60 * 1000) {
+      freeUsed = 0;
+      freeResetDate = now;
+    }
+
+    const paidCredits = typeof data.paidCredits === "number" ? data.paidCredits : 0;
+    const totalAudits = typeof data.totalAuditsRun === "number" ? data.totalAuditsRun : 0;
+
+    if (paidCredits > 0) {
+      tx.set(ref, { paidCredits: paidCredits - 1, totalAuditsRun: totalAudits + 1 }, { merge: true });
+      return { ok: true, remaining: paidCredits - 1, type: "paid" };
+    }
+
+    if (freeUsed < FREE_AUDITS_LIMIT) {
+      tx.set(ref, {
+        freeAuditsUsedThisMonth: freeUsed + 1,
+        freeAuditResetDate: freeResetDate,
+        totalAuditsRun: totalAudits + 1,
+      }, { merge: true });
+      return { ok: true, remaining: FREE_AUDITS_LIMIT - (freeUsed + 1), type: "free" };
+    }
+
+    return { ok: false, remaining: 0, type: "none" };
   });
-}
-
-function isFirebaseMisconfigured(error: unknown): boolean {
-  return error instanceof Error && /FIREBASE_SERVICE_ACCOUNT/.test(error.message);
-}
-
-async function verifyAndUnlock(
-  idToken: string,
-  rawId: string | undefined
-): Promise<{ status: number; body: Record<string, unknown> }> {
-  const paymentLinkId = (typeof rawId === "string" ? rawId : "").trim();
-  if (!/^pl_[A-Za-z0-9]+$/.test(paymentLinkId)) {
-    return { status: 400, body: { ok: false, error: "Missing or invalid payment_link_id" } };
-  }
-
-  let uid: string;
-  try {
-    uid = await verifyIdToken(idToken);
-  } catch (error) {
-    if (isFirebaseMisconfigured(error)) {
-      const reason = error.message;
-      return { status: 500, body: { ok: false, error: `Payment setup is incomplete (${reason})` } };
-    }
-    const reason = error instanceof Error ? error.message : "unknown error";
-    return { status: 401, body: { ok: false, error: `Authentication required (${reason})` } };
-  }
-
-  try {
-    const paid = await isPaymentLinkPaid(paymentLinkId);
-    if (paid) {
-      await grantCredits(uid, CREDIT_PACK_SIZE);
-    }
-    return { status: 200, body: { ok: true, paid, credits: paid ? CREDIT_PACK_SIZE : 0 } };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Verification failed";
-    return { status: 502, body: { ok: false, error: message } };
-  }
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -175,10 +132,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return res.status(401).json({ ok: false, error: "Authentication required" });
     }
 
-    const result = await verifyAndUnlock(idToken, req.body?.payment_link_id);
-    return res.status(result.status).json(result.body);
+    const uid = await verifyIdToken(idToken);
+    const result = await decrementCredits(uid);
+    return res.status(result.ok ? 200 : 403).json(result);
   } catch (error) {
-    console.error("[api/premium/verify]", error);
+    console.error("[api/audit/decrement-credits]", error);
     return res.status(500).json({ ok: false, error: error instanceof Error ? error.message : "Server error" });
   }
 }

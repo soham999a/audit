@@ -1,17 +1,18 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import type { App, ServiceAccount } from "firebase-admin/app";
 
-const PREMIUM_PRICE_INR = 50;
+const CREDIT_PACK_PRICE_INR = 49;
+const CREDIT_PACK_SIZE = 10;
 
 const CURRENCIES: Record<string, { amount: number }> = {
-  INR: { amount: 5000 },
-  USD: { amount: 60 },
-  EUR: { amount: 55 },
-  GBP: { amount: 45 },
-  AUD: { amount: 85 },
-  CAD: { amount: 80 },
-  AED: { amount: 275 },
-  SGD: { amount: 80 },
+  INR: { amount: 4900 },
+  USD: { amount: 59 },
+  EUR: { amount: 54 },
+  GBP: { amount: 44 },
+  AUD: { amount: 83 },
+  CAD: { amount: 78 },
+  AED: { amount: 270 },
+  SGD: { amount: 78 },
 };
 
 const DEFAULT_CURRENCY = "USD";
@@ -180,11 +181,11 @@ async function createLinkForUser(
       currency,
       callbackUrl,
       uid,
-      description: `Matrix Website Auditor — one-time premium unlock (base ${PREMIUM_PRICE_INR} INR)`,
+      description: `Matrix Website Auditor — ${CREDIT_PACK_SIZE} audit credits (base ${CREDIT_PACK_PRICE_INR} INR)`,
     });
     return {
       status: 200,
-      body: { ok: true, id: link.id, short_url: link.short_url, currency, amount, baseInr: PREMIUM_PRICE_INR },
+      body: { ok: true, id: link.id, short_url: link.short_url, currency, amount, baseInr: CREDIT_PACK_PRICE_INR },
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : "Failed to create payment link";

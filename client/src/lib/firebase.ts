@@ -99,3 +99,54 @@ export async function fetchPremium(uid: string): Promise<PremiumStatus> {
   const data = snapshot.data();
   return { premium: data?.premium === true };
 }
+
+export type UserCredits = {
+  freeUsed: number;
+  freeRemaining: number;
+  paidCredits: number;
+  totalAuditsRun: number;
+};
+
+const NO_CREDITS: UserCredits = { freeUsed: 0, freeRemaining: 2, paidCredits: 0, totalAuditsRun: 0 };
+
+const FREE_AUDITS_LIMIT = 2;
+
+export function watchUserCredits(uid: string, callback: (credits: UserCredits) => void): () => void {
+  if (!db) {
+    callback(NO_CREDITS);
+    return () => undefined;
+  }
+  const ref = doc(db, "users", uid);
+  return onSnapshot(ref, (snapshot) => {
+    if (!snapshot.exists()) {
+      callback(NO_CREDITS);
+      return;
+    }
+    const data = snapshot.data();
+    const now = Date.now();
+    const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+
+    let freeUsed = typeof data?.freeAuditsUsedThisMonth === "number" ? data.freeAuditsUsedThisMonth : 0;
+    const resetDate = data?.freeAuditResetDate;
+    if (resetDate && typeof resetDate?.toMillis === "function") {
+      if (now - resetDate.toMillis() > THIRTY_DAYS_MS) {
+        freeUsed = 0;
+      }
+    }
+
+    callback({
+      freeUsed,
+      freeRemaining: Math.max(0, FREE_AUDITS_LIMIT - freeUsed),
+      paidCredits: typeof data?.paidCredits === "number" ? data.paidCredits : 0,
+      totalAuditsRun: typeof data?.totalAuditsRun === "number" ? data.totalAuditsRun : 0,
+    });
+  });
+}
+
+export async function decrementCreditsClient(idToken: string): Promise<{ ok: boolean; remaining: number; type: string }> {
+  const response = await fetch("/api/audit/decrement-credits", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${idToken}` },
+  });
+  return response.json() as Promise<{ ok: boolean; remaining: number; type: string }>;
+}

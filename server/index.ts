@@ -10,6 +10,8 @@ import {
   unlockUserByUid,
   verifyAndUnlock,
 } from "../shared/premiumApi";
+import { decrementCredits } from "../shared/firebaseAdmin";
+import { verifyIdToken } from "../shared/firebaseAdmin";
 
 function bearerToken(req: express.Request): string {
   const authorization = req.headers.authorization ?? "";
@@ -87,6 +89,20 @@ async function startServer() {
     }
     const result = await verifyAndUnlock(idToken, req.body?.payment_link_id);
     return res.status(result.status).json(result.body);
+  });
+
+  app.post("/api/audit/decrement-credits", async (req, res) => {
+    const idToken = bearerToken(req);
+    if (!idToken) {
+      return res.status(401).json({ ok: false, error: "Authentication required" });
+    }
+    try {
+      const uid = await verifyIdToken(idToken);
+      const result = await decrementCredits(uid);
+      return res.status(result.ok ? 200 : 403).json(result);
+    } catch (error) {
+      return res.status(500).json({ ok: false, error: error instanceof Error ? error.message : "Server error" });
+    }
   });
 
   app.post("/api/audit/fetch", async (req, res) => {

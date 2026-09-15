@@ -14,6 +14,7 @@ import {
 } from "./shared/premiumApi";
 import { fetchPage } from "./shared/fetchPage";
 import { verifyWebhookSignature } from "./shared/razorpay";
+import { decrementCredits, verifyIdToken } from "./shared/firebaseAdmin";
 
 // =============================================================================
 // Manus Debug Collector - Vite Plugin
@@ -239,6 +240,20 @@ function viteApiMiddleware(): Plugin {
                     body.payment_link_id as string | undefined
                   );
             sendJson(res, result.status, result.body);
+            return;
+          }
+          if (req.method === "POST" && route === "/api/audit/decrement-credits") {
+            const authorization = req.headers.authorization ?? "";
+            const idToken = authorization.startsWith("Bearer ")
+              ? authorization.slice("Bearer ".length)
+              : "";
+            if (!idToken) {
+              sendJson(res, 401, { ok: false, error: "Authentication required" });
+              return;
+            }
+            const uid = await verifyIdToken(idToken);
+            const result = await decrementCredits(uid);
+            sendJson(res, result.ok ? 200 : 403, result);
             return;
           }
           if (req.method === "POST" && route === "/api/premium/webhook") {
