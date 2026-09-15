@@ -16,7 +16,6 @@ const CURRENCIES: Record<string, { amount: number }> = {
 };
 
 const DEFAULT_CURRENCY = "USD";
-const SUPPORTED_CURRENCIES = Object.keys(CURRENCIES);
 
 function amountForCurrency(currency: string): { currency: string; amount: number } {
   const entry = CURRENCIES[currency];
@@ -152,7 +151,7 @@ function isFirebaseMisconfigured(error: unknown): boolean {
 
 async function createLinkForUser(
   idToken: string,
-  currencyRaw: string | undefined,
+  _currency: string | undefined,
   origin: string
 ): Promise<{ status: number; body: Record<string, unknown> }> {
   let uid: string;
@@ -167,11 +166,7 @@ async function createLinkForUser(
     return { status: 401, body: { ok: false, error: `Authentication required (${reason})` } };
   }
 
-  const currency = (typeof currencyRaw === "string" ? currencyRaw : "INR").toUpperCase();
-  if (!SUPPORTED_CURRENCIES.includes(currency)) {
-    return { status: 400, body: { ok: false, error: `Unsupported currency "${currency}"` } };
-  }
-
+  const currency = "INR";
   const { amount } = amountForCurrency(currency);
   const callbackUrl = `${origin}/?premium_payment=1`;
 

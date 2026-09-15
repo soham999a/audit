@@ -32,7 +32,6 @@ import {
   baseInrLabel,
   createRazorpayCheckout,
   creditPackLabel,
-  detectLocalCurrency,
   priceLabelFor,
   verifyAndUnlockPremium,
 } from "@/lib/premium";
@@ -196,7 +195,7 @@ export default function Home() {
   const [payStatus, setPayStatus] = useState<"idle" | "creating" | "waiting" | "verifying" | "error">("idle");
   const [payError, setPayError] = useState("");
   const [paymentLinkId, setPaymentLinkId] = useState<string | null>(null);
-  const currency = useMemo(detectLocalCurrency, []);
+  const currency = "INR";
   const priceLabel = useMemo(() => priceLabelFor(currency), [currency]);
   const convertedLabel = useMemo(() => baseInrLabel(currency), [currency]);
 
@@ -487,7 +486,7 @@ export default function Home() {
             </button>
             {payError && (<div className="premium-error"><CircleAlert size={14} /> {payError}</div>)}
             <p className="premium-note">Credits are added to your account only after Razorpay confirms the payment. Returning from checkout verifies automatically; you can also press the button above.</p>
-            <p className="premium-note">Payments are processed by Razorpay. Your {priceLabel} is converted from the ₹{49} base price for your region. You get 2 free audits per month.</p>
+            <p className="premium-note">Payments are processed by Razorpay in Indian Rupees (₹{49}). You get 2 free audits per month.</p>
           </aside>
         </div>
       )}

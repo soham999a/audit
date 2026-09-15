@@ -1,4 +1,4 @@
-import { amountForCurrency, CREDIT_PACK_SIZE, CREDIT_PACK_PRICE_INR, SUPPORTED_CURRENCIES } from "./premium";
+import { amountForCurrency, CREDIT_PACK_SIZE, CREDIT_PACK_PRICE_INR } from "./premium";
 import { createPaymentLink, isPaymentLinkPaid } from "./razorpay";
 import { grantCredits, setUserPremium, verifyIdToken } from "./firebaseAdmin";
 
@@ -10,7 +10,7 @@ function isFirebaseMisconfigured(error: unknown): boolean {
 
 export async function createLinkForUser(
   idToken: string,
-  currencyRaw: string | undefined,
+  _currency: string | undefined,
   origin: string
 ): Promise<ApiResult> {
   let uid: string;
@@ -23,11 +23,7 @@ export async function createLinkForUser(
     return { status: 401, body: { ok: false, error: "Authentication required" } };
   }
 
-  const currency = (typeof currencyRaw === "string" ? currencyRaw : "INR").toUpperCase();
-  if (!SUPPORTED_CURRENCIES.includes(currency)) {
-    return { status: 400, body: { ok: false, error: `Unsupported currency "${currency}"` } };
-  }
-
+  const currency = "INR";
   const { amount } = amountForCurrency(currency);
   const callbackUrl = `${origin}/?premium_payment=1`;
 
